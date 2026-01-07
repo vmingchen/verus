@@ -1,0 +1,22 @@
+[package]
+name = "vstrip"
+version = "0.1.0"
+edition = "2021"
+authors = ["Verus Contributors"]
+description = "Strip Verus specifications and proof code from Rust source files"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "vstrip"
+path = "src/main.rs"
+
+[dependencies]
+verus_syn = { path = "../../dependencies/syn" }
+verus_prettyplease = { path = "../../dependencies/prettyplease" }
+clap = { version = "4.0", features = ["derive"] }
+walkdir = "2.2"
+anyhow = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+glob = "0.3"
