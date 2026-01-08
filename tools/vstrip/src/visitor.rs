@@ -1,8 +1,13 @@
 use verus_syn::visit_mut::{self, VisitMut};
 use verus_syn::*;
+use quote::ToTokens;
+use crate::Config;
 
 /// Visitor that strips Verus specifications and proof code
-pub struct StripVisitor {
+pub struct StripVisitor<'a> {
+    /// Configuration
+    config: &'a Config,
+
     /// Track nested ghost/proof context depth (used in future phases)
     #[allow(dead_code)]
     ghost_depth: u32,
@@ -14,9 +19,10 @@ pub struct StripVisitor {
     warnings: Vec<String>,
 }
 
-impl StripVisitor {
-    pub fn new() -> Self {
+impl<'a> StripVisitor<'a> {
+    pub fn new(config: &'a Config) -> Self {
         Self {
+            config,
             ghost_depth: 0,
             inside_exec_fn: false,
             warnings: Vec::new(),
@@ -28,18 +34,123 @@ impl StripVisitor {
     }
 }
 
-impl Default for StripVisitor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Helper function to check if a function is spec or proof mode
 fn is_spec_or_proof_fn(mode: &FnMode) -> bool {
     matches!(
         mode,
         FnMode::Spec(_) | FnMode::SpecChecked(_) | FnMode::Proof(_) | FnMode::ProofAxiom(_)
     )
+}
+
+/// Helper function to convert specification expressions to a formatted string
+fn spec_exprs_to_string(exprs: &Specification) -> String {
+    exprs
+        .exprs
+        .iter()
+        .map(|expr| {
+            let mut tokens = proc_macro2::TokenStream::new();
+            expr.to_tokens(&mut tokens);
+            tokens.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Helper function to create comment attributes from spec fields
+fn create_spec_comment_attrs(spec: &SignatureSpec, is_pub: bool) -> Vec<Attribute> {
+    let mut comments = Vec::new();
+
+    if let Some(ref requires) = spec.requires {
+        let spec_str = spec_exprs_to_string(&requires.exprs);
+        comments.push(format!("requires {}", spec_str));
+    }
+
+    if let Some(ref recommends) = spec.recommends {
+        let spec_str = spec_exprs_to_string(&recommends.exprs);
+        let via_str = if let Some((_, ref expr)) = recommends.via {
+            let mut tokens = proc_macro2::TokenStream::new();
+            expr.to_tokens(&mut tokens);
+            format!(" via {}", tokens.to_string())
+        } else {
+            String::new()
+        };
+        comments.push(format!("recommends {}{}", spec_str, via_str));
+    }
+
+    if let Some(ref ensures) = spec.ensures {
+        let spec_str = spec_exprs_to_string(&ensures.exprs);
+        comments.push(format!("ensures {}", spec_str));
+    }
+
+    if let Some(ref default_ensures) = spec.default_ensures {
+        let spec_str = spec_exprs_to_string(&default_ensures.exprs);
+        comments.push(format!("default_ensures {}", spec_str));
+    }
+
+    if let Some(ref returns) = spec.returns {
+        let spec_str = spec_exprs_to_string(&returns.exprs);
+        comments.push(format!("returns {}", spec_str));
+    }
+
+    // Skip decreases as per requirements
+
+    if let Some(ref invariants) = spec.invariants {
+        let inv_str = match &invariants.set {
+            InvariantNameSet::Any(_) => "any".to_string(),
+            InvariantNameSet::None(_) => "none".to_string(),
+            InvariantNameSet::List(list) => {
+                let exprs: Vec<String> = list
+                    .exprs
+                    .iter()
+                    .map(|expr| {
+                        let mut tokens = proc_macro2::TokenStream::new();
+                        expr.to_tokens(&mut tokens);
+                        tokens.to_string()
+                    })
+                    .collect();
+                format!("[{}]", exprs.join(", "))
+            }
+            InvariantNameSet::Set(set) => {
+                let mut tokens = proc_macro2::TokenStream::new();
+                set.expr.to_tokens(&mut tokens);
+                tokens.to_string()
+            }
+        };
+        comments.push(format!("opens_invariants {}", inv_str));
+    }
+
+    if let Some(ref unwind) = spec.unwind {
+        let when_str = if let Some((_, ref expr)) = unwind.when {
+            let mut tokens = proc_macro2::TokenStream::new();
+            expr.to_tokens(&mut tokens);
+            format!(" when {}", tokens.to_string())
+        } else {
+            String::new()
+        };
+        comments.push(format!("no_unwind{}", when_str));
+    }
+
+    if comments.is_empty() {
+        return Vec::new();
+    }
+
+    // Add header and convert to attributes
+    let mut result = Vec::new();
+
+    // Use /// for pub functions, // for private
+    let comment_prefix = if is_pub { "///" } else { "//" };
+
+    // Add header
+    let header = format!("{} ## Verus Annotations", comment_prefix);
+    result.push(verus_syn::parse_quote! { #[doc = #header] });
+
+    // Add each spec comment
+    for comment in comments {
+        let comment_line = format!("{} {}", comment_prefix, comment);
+        result.push(verus_syn::parse_quote! { #[doc = #comment_line] });
+    }
+
+    result
 }
 
 /// Helper function to check if a type is Ghost<T> or Tracked<T>
@@ -115,7 +226,7 @@ fn is_proof_expr(expr: &Expr) -> bool {
     }
 }
 
-impl VisitMut for StripVisitor {
+impl<'a> VisitMut for StripVisitor<'a> {
     fn visit_file_mut(&mut self, file: &mut File) {
         // Visit all items first
         for item in &mut file.items {
@@ -147,8 +258,14 @@ impl VisitMut for StripVisitor {
     }
 
     fn visit_item_fn_mut(&mut self, func: &mut ItemFn) {
+        // Convert specifications to comments if flag is enabled
+        if self.config.spec_as_comments {
+            let is_pub = matches!(func.vis, Visibility::Public(_));
+            let spec_comments = create_spec_comment_attrs(&func.sig.spec, is_pub);
+            func.attrs.extend(spec_comments);
+        }
+
         // Strip specifications from signature
-        // Use the built-in method!
         func.sig.spec.erase_spec_fields();
         func.sig.mode = FnMode::Default;
 
@@ -175,6 +292,13 @@ impl VisitMut for StripVisitor {
             return;
         }
 
+        // Convert specifications to comments if flag is enabled
+        if self.config.spec_as_comments {
+            let is_pub = matches!(func.vis, Visibility::Public(_));
+            let spec_comments = create_spec_comment_attrs(&func.sig.spec, is_pub);
+            func.attrs.extend(spec_comments);
+        }
+
         // Strip specifications from signature
         func.sig.spec.erase_spec_fields();
         func.sig.mode = FnMode::Default;
@@ -199,6 +323,13 @@ impl VisitMut for StripVisitor {
         // Skip spec/proof trait methods
         if is_spec_or_proof_fn(&func.sig.mode) {
             return;
+        }
+
+        // Convert specifications to comments if flag is enabled
+        if self.config.spec_as_comments {
+            // Trait methods are always public
+            let spec_comments = create_spec_comment_attrs(&func.sig.spec, true);
+            func.attrs.extend(spec_comments);
         }
 
         // Strip specifications from signature

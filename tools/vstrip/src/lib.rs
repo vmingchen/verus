@@ -18,6 +18,39 @@ pub use visitor::StripVisitor;
 
 use verus_syn::visit_mut::VisitMut;
 
+/// Convert doc attributes to actual comments
+///
+/// This function post-processes the output to convert #[doc = "// ..."] or
+/// #[doc = "/// ..."] attributes into actual line comments.
+fn convert_doc_attrs_to_comments(source: &str) -> String {
+    let mut result = String::new();
+    let mut lines = source.lines().peekable();
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+
+        // Check if this is a doc attribute we injected
+        if trimmed.starts_with("#[doc = \"//") && trimmed.ends_with("\"]") {
+            // Extract the comment from the doc attribute
+            // Format: #[doc = "// comment text"]
+            let start = trimmed.find("\"").unwrap() + 1;
+            let end = trimmed.rfind("\"").unwrap();
+            let comment = &trimmed[start..end];
+
+            // Get the indentation from the original line
+            let indent = &line[..line.len() - trimmed.len()];
+            result.push_str(indent);
+            result.push_str(comment);
+            result.push('\n');
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    result
+}
+
 /// Strip Verus specifications from source code string
 ///
 /// # Arguments
@@ -46,7 +79,7 @@ use verus_syn::visit_mut::VisitMut;
 /// let stripped = vstrip::strip_source(source, &Config::default())?;
 /// // Result: "fn add(a: u32, b: u32) -> u32 { a + b }"
 /// ```
-pub fn strip_source(source: &str, _config: &Config) -> Result<String> {
+pub fn strip_source(source: &str, config: &Config) -> Result<String> {
     // Preprocess: unwrap verus! macros
     let preprocessed = preprocess::unwrap_verus_macros(source)?;
 
@@ -58,11 +91,16 @@ pub fn strip_source(source: &str, _config: &Config) -> Result<String> {
     })?;
 
     // Apply stripping transformation
-    let mut visitor = StripVisitor::new();
+    let mut visitor = StripVisitor::new(config);
     visitor.visit_file_mut(&mut file);
 
     // Pretty-print the result
-    let output = verus_prettyplease::unparse(&file);
+    let mut output = verus_prettyplease::unparse(&file);
+
+    // Post-process to convert doc attributes to comments if needed
+    if config.spec_as_comments {
+        output = convert_doc_attrs_to_comments(&output);
+    }
 
     // TODO: Handle warnings
     // for warning in visitor.warnings() {
@@ -96,10 +134,15 @@ pub fn strip_file(path: &Path, config: &Config) -> Result<String> {
         suggestion: "Ensure the file is valid Verus syntax and compiles with Verus",
     })?;
 
-    let mut visitor = StripVisitor::new();
+    let mut visitor = StripVisitor::new(config);
     visitor.visit_file_mut(&mut file);
 
-    let output = verus_prettyplease::unparse(&file);
+    let mut output = verus_prettyplease::unparse(&file);
+
+    // Post-process to convert doc attributes to comments if needed
+    if config.spec_as_comments {
+        output = convert_doc_attrs_to_comments(&output);
+    }
 
     // Handle empty files
     if file.items.is_empty() && !config.keep_empty {
@@ -266,9 +309,10 @@ mod tests {
         assert!(result.is_ok());
 
         let output = result.unwrap();
-        // Function should remain but specs should be gone
+        // Function should remain but specs should be stripped
         assert!(output.contains("fn divide"));
         assert!(output.contains("a / b"));
+        // Specs should be removed by default
         assert!(!output.contains("requires"));
         assert!(!output.contains("ensures"));
     }

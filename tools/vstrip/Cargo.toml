@@ -16,6 +16,8 @@ verus_prettyplease = { path = "../../dependencies/prettyplease" }
 clap = { version = "4.0", features = ["derive"] }
 walkdir = "2.2"
 anyhow = "1.0"
+quote = "1.0"
+proc-macro2 = "1.0"
 
 [dev-dependencies]
 tempfile = "3.0"
