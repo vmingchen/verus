@@ -17,6 +17,9 @@ pub struct Config {
 
     /// Keep empty files (vs. removing them)
     pub keep_empty: bool,
+
+    /// Convert specifications to comments instead of removing them
+    pub spec_as_comments: bool,
 }
 
 impl Config {
@@ -27,6 +30,7 @@ impl Config {
             recursive: false,
             check: false,
             keep_empty: false,
+            spec_as_comments: false,
         }
     }
 }

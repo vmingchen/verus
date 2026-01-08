@@ -49,6 +49,13 @@ struct Cli {
     /// creates an empty file instead.
     #[arg(long)]
     keep_empty: bool,
+
+    /// Convert specifications to comments instead of removing them
+    ///
+    /// When enabled, function pre/post conditions (requires, ensures, etc.)
+    /// are converted to doc comments (/// for pub functions, // for private).
+    #[arg(short = 'c', long)]
+    spec_as_comments: bool,
 }
 
 fn main() {
@@ -75,6 +82,7 @@ fn main() {
         recursive: cli.recursive,
         check: cli.check,
         keep_empty: cli.keep_empty,
+        spec_as_comments: cli.spec_as_comments,
     };
 
     // Process the input
