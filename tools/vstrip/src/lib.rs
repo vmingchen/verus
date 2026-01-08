@@ -24,9 +24,9 @@ use verus_syn::visit_mut::VisitMut;
 /// #[doc = "/// ..."] attributes into actual line comments.
 fn convert_doc_attrs_to_comments(source: &str) -> String {
     let mut result = String::new();
-    let mut lines = source.lines().peekable();
+    let lines = source.lines();
 
-    while let Some(line) = lines.next() {
+    for line in lines {
         let trimmed = line.trim();
 
         // Check if this is a doc attribute we injected

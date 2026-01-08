@@ -1,7 +1,7 @@
+use crate::Config;
+use quote::ToTokens;
 use verus_syn::visit_mut::{self, VisitMut};
 use verus_syn::*;
-use quote::ToTokens;
-use crate::Config;
 
 /// Visitor that strips Verus specifications and proof code
 pub struct StripVisitor<'a> {
@@ -70,7 +70,7 @@ fn create_spec_comment_attrs(spec: &SignatureSpec, is_pub: bool) -> Vec<Attribut
         let via_str = if let Some((_, ref expr)) = recommends.via {
             let mut tokens = proc_macro2::TokenStream::new();
             expr.to_tokens(&mut tokens);
-            format!(" via {}", tokens.to_string())
+            format!(" via {}", tokens)
         } else {
             String::new()
         };
@@ -123,7 +123,7 @@ fn create_spec_comment_attrs(spec: &SignatureSpec, is_pub: bool) -> Vec<Attribut
         let when_str = if let Some((_, ref expr)) = unwind.when {
             let mut tokens = proc_macro2::TokenStream::new();
             expr.to_tokens(&mut tokens);
-            format!(" when {}", tokens.to_string())
+            format!(" when {}", tokens)
         } else {
             String::new()
         };

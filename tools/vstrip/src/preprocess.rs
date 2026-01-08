@@ -134,6 +134,20 @@ fn find_matching_brace(source: &str, start: usize) -> Option<usize> {
         }
 
         if ch == '\'' && !in_string {
+            // Distinguish between character literals ('a', '\n') and Rust lifetimes ('static, 'a)
+            // Character literals: ' followed by 1-2 chars (possibly escaped), then '
+            // Lifetimes: ' followed by an identifier character
+            if i + 1 < bytes.len() {
+                let next_ch = bytes[i + 1] as char;
+                // If next char is alphanumeric or underscore, it's likely a lifetime
+                // Lifetimes: 'static, 'a, 'b, '_
+                if next_ch.is_alphanumeric() || next_ch == '_' {
+                    // This is a lifetime, not a character literal - skip it
+                    i += 1;
+                    continue;
+                }
+            }
+            // Otherwise, treat as character literal
             in_char = !in_char;
             i += 1;
             continue;
