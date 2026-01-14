@@ -233,9 +233,10 @@ impl<'a> VisitMut for StripVisitor<'a> {
             self.visit_item_mut(item);
         }
 
-        // Filter out spec/proof items
+        // Filter out spec/proof items and vstd imports
         file.items.retain(|item| match item {
             Item::Fn(f) => !is_spec_or_proof_fn(&f.sig.mode),
+            Item::Use(_) => !is_vstd_import(item),
             // Keep all other items for now
             _ => true,
         });
@@ -250,6 +251,30 @@ impl<'a> VisitMut for StripVisitor<'a> {
                 }
                 self.visit_item_fn_mut(f);
             }
+            Item::Impl(item_impl) => {
+                // Filter out spec/proof methods from impl blocks
+                item_impl.items.retain(|impl_item| {
+                    if let ImplItem::Fn(f) = impl_item {
+                        !is_spec_or_proof_fn(&f.sig.mode)
+                    } else {
+                        true
+                    }
+                });
+                // Continue with default visitor
+                visit_mut::visit_item_impl_mut(self, item_impl);
+            }
+            Item::Trait(item_trait) => {
+                // Filter out spec/proof methods from trait blocks
+                item_trait.items.retain(|trait_item| {
+                    if let TraitItem::Fn(f) = trait_item {
+                        !is_spec_or_proof_fn(&f.sig.mode)
+                    } else {
+                        true
+                    }
+                });
+                // Continue with default visitor
+                visit_mut::visit_item_trait_mut(self, item_trait);
+            }
             _ => {
                 // Delegate to default visitor for other items
                 visit_mut::visit_item_mut(self, item);
@@ -258,6 +283,9 @@ impl<'a> VisitMut for StripVisitor<'a> {
     }
 
     fn visit_item_fn_mut(&mut self, func: &mut ItemFn) {
+        // Strip verifier attributes
+        func.attrs.retain(|attr| !is_verifier_attribute(attr));
+
         // Convert specifications to comments if flag is enabled
         if self.config.spec_as_comments {
             let is_pub = matches!(func.vis, Visibility::Public(_));
@@ -292,6 +320,9 @@ impl<'a> VisitMut for StripVisitor<'a> {
             return;
         }
 
+        // Strip verifier attributes
+        func.attrs.retain(|attr| !is_verifier_attribute(attr));
+
         // Convert specifications to comments if flag is enabled
         if self.config.spec_as_comments {
             let is_pub = matches!(func.vis, Visibility::Public(_));
@@ -324,6 +355,9 @@ impl<'a> VisitMut for StripVisitor<'a> {
         if is_spec_or_proof_fn(&func.sig.mode) {
             return;
         }
+
+        // Strip verifier attributes
+        func.attrs.retain(|attr| !is_verifier_attribute(attr));
 
         // Convert specifications to comments if flag is enabled
         if self.config.spec_as_comments {
@@ -379,6 +413,9 @@ impl<'a> VisitMut for StripVisitor<'a> {
     }
 
     fn visit_item_struct_mut(&mut self, item_struct: &mut ItemStruct) {
+        // Strip verifier attributes from struct
+        item_struct.attrs.retain(|attr| !is_verifier_attribute(attr));
+
         // Visit fields and filter ghost/tracked
         match &mut item_struct.fields {
             Fields::Named(fields) => {
@@ -452,4 +489,24 @@ fn is_proof_macro(mac: &Macro) -> bool {
             | Some("open_invariant")
             | Some("open_local_invariant")
     )
+}
+
+/// Helper function to check if an import is from vstd
+fn is_vstd_import(item: &Item) -> bool {
+    if let Item::Use(item_use) = item {
+        // Check if the path starts with "vstd"
+        let path_string = item_use.tree.to_token_stream().to_string();
+        path_string.starts_with("vstd")
+    } else {
+        false
+    }
+}
+
+/// Helper function to check if an attribute is a verifier attribute
+fn is_verifier_attribute(attr: &Attribute) -> bool {
+    attr.path()
+        .segments
+        .first()
+        .map(|seg| seg.ident == "verifier")
+        .unwrap_or(false)
 }

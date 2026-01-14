@@ -5,9 +5,6 @@ struct Counter {
     value: u32,
 }
 impl Counter {
-    fn spec_method(&self) -> int {
-        self.value as int
-    }
     fn new() -> Self {
         Counter { value: 0 }
     }
